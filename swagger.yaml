@@ -1,0 +1,883 @@
+openapi: 3.0.3
+
+info:
+  title: E-Commerce API — Testing Practice
+  version: 1.0.0
+  description: |
+    Full-featured e-commerce REST API built for API testing practice.
+    Covers auth flows, CRUD, pagination (offset + cursor), caching (ETag/304),
+    file uploads, BOLA/IDOR, rate limiting, fault simulation, idempotency,
+    RFC 7807 errors, state machines, and role-based access.
+
+    ## Seeded credentials (reset anytime via `POST /v1/seed/reset`)
+    | Role  | Email             | Password   |
+    |-------|-------------------|------------|
+    | admin | admin@test.com    | Admin123!  |
+    | user  | user@test.com     | User123!   |
+    | user  | user2@test.com    | User123!   |
+
+    ## Notable testing hooks
+    - `?_delay=3000` — delays response by N ms (max 10 000)
+    - `?_fail=503`   — returns a simulated error with that status code
+    - `Idempotency-Key` header on `POST /orders` — prevents duplicate orders on retry
+    - `If-None-Match` header on GET product(s) — returns 304 when data unchanged
+
+servers:
+  - url: http://localhost:3000/v1
+    description: Local development
+  - url: https://YOUR-APP.onrender.com/v1
+    description: Production (update after deploying to Render)
+
+tags:
+  - name: Auth
+    description: Registration, login, token refresh, logout
+  - name: Categories
+    description: Product category management
+  - name: Products
+    description: Product catalogue — supports filtering, sorting, pagination, file upload
+  - name: Cart
+    description: Per-user shopping cart
+  - name: Orders
+    description: Checkout, order tracking, status state machine
+  - name: Users
+    description: User profile management
+  - name: Seed
+    description: Test data utilities — reset state between test runs
+
+# ── Reusable components ────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 7807 Problem Details
+      required: [type, title, status, detail, instance]
+      properties:
+        type:     { type: string, example: "http://localhost:3000/errors/not-found" }
+        title:    { type: string, example: "Not Found" }
+        status:   { type: integer, example: 404 }
+        detail:   { type: string, example: "Product with id 99 does not exist" }
+        instance: { type: string, example: "/v1/products/99" }
+
+    User:
+      type: object
+      properties:
+        id:        { type: integer, example: 2 }
+        name:      { type: string,  example: "Test User" }
+        email:     { type: string,  format: email, example: "user@test.com" }
+        role:      { type: string,  enum: [user, admin], example: "user" }
+        createdAt: { type: string,  format: date-time }
+
+    Category:
+      type: object
+      properties:
+        id:          { type: integer, example: 1 }
+        name:        { type: string,  example: "Electronics" }
+        description: { type: string,  example: "Gadgets and devices" }
+        createdAt:   { type: string,  format: date-time }
+
+    Product:
+      type: object
+      properties:
+        id:          { type: integer, example: 1 }
+        name:        { type: string,  example: "Smartphone Pro X" }
+        description: { type: string,  example: "Latest flagship smartphone" }
+        price:       { type: number,  format: float, example: 999.99 }
+        stock:       { type: integer, example: 50 }
+        categoryId:  { type: integer, example: 1 }
+        imageUrl:    { type: string, nullable: true, example: "/v1/products/1/image" }
+        createdAt:   { type: string,  format: date-time }
+
+    CartItem:
+      type: object
+      properties:
+        id:        { type: integer }
+        productId: { type: integer }
+        quantity:  { type: integer }
+        product:   { $ref: '#/components/schemas/Product' }
+
+    Cart:
+      type: object
+      properties:
+        items:     { type: array, items: { $ref: '#/components/schemas/CartItem' } }
+        total:     { type: number, example: 249.99 }
+        itemCount: { type: integer, example: 1 }
+
+    OrderItem:
+      type: object
+      properties:
+        productId:   { type: integer }
+        productName: { type: string }
+        price:       { type: number }
+        quantity:    { type: integer }
+        subtotal:    { type: number }
+
+    Order:
+      type: object
+      properties:
+        id:        { type: integer, example: 1 }
+        userId:    { type: integer, example: 2 }
+        items:     { type: array, items: { $ref: '#/components/schemas/OrderItem' } }
+        total:     { type: number, example: 249.99 }
+        status:    { type: string, enum: [pending, confirmed, shipped, delivered, cancelled] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    OffsetPagination:
+      type: object
+      properties:
+        type:       { type: string, example: offset }
+        page:       { type: integer }
+        limit:      { type: integer }
+        total:      { type: integer }
+        totalPages: { type: integer }
+        hasNext:    { type: boolean }
+        hasPrev:    { type: boolean }
+
+    CursorPagination:
+      type: object
+      properties:
+        type:       { type: string, example: cursor }
+        limit:      { type: integer }
+        nextCursor: { type: integer, nullable: true }
+        hasNext:    { type: boolean }
+
+  responses:
+    Unauthorized:
+      description: Unauthorized — missing, expired, or invalid token
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Forbidden — insufficient role
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Conflict — duplicate resource
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnprocessableEntity:
+      description: Validation error
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:           { schema: { type: integer } }
+        X-RateLimit-Limit:     { schema: { type: integer } }
+        X-RateLimit-Remaining: { schema: { type: integer } }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Auth ────────────────────────────────────────────────────────────────────
+
+  /auth/register:
+    post:
+      summary: Register a new user
+      description: Creates a new account with role=user. Sending role in the body is ignored (mass assignment protection).
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:     { type: string, minLength: 2, example: "Jane Doe" }
+                email:    { type: string, format: email, example: "jane@example.com" }
+                password: { type: string, minLength: 8, example: "MyPass123!" }
+      responses:
+        '201':
+          description: User created
+          headers:
+            Location:     { schema: { type: string }, example: "/v1/users/4" }
+            X-Request-Id: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:         { $ref: '#/components/schemas/User' }
+                  accessToken:  { type: string }
+                  refreshToken: { type: string }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /auth/login:
+    post:
+      summary: Login
+      description: |
+        Returns JWT access token + refresh token.
+        Rate limited to **5 failed attempts per 15 min per IP**.
+        Watch `X-RateLimit-Remaining` header.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email, example: "user@test.com" }
+                password: { type: string, example: "User123!" }
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            X-RateLimit-Limit:     { schema: { type: integer } }
+            X-RateLimit-Remaining: { schema: { type: integer } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:         { $ref: '#/components/schemas/User' }
+                  accessToken:  { type: string }
+                  refreshToken: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: New access token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      summary: Logout (revoke refresh token)
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '204': { description: Logged out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me:
+    get:
+      summary: Get current authenticated user
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ── Categories ──────────────────────────────────────────────────────────────
+
+  /categories:
+    get:
+      summary: List categories (paginated)
+      tags: [Categories]
+      parameters:
+        - { name: page,  in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 10 } }
+      responses:
+        '200':
+          description: Paginated category list
+          headers:
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:       { type: array, items: { $ref: '#/components/schemas/Category' } }
+                  pagination: { $ref: '#/components/schemas/OffsetPagination' }
+    post:
+      summary: Create category (admin)
+      tags: [Categories]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string, example: "Sports" }
+                description: { type: string, example: "Sports equipment" }
+      responses:
+        '201':
+          description: Category created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /categories/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Get category by ID
+      tags: [Categories]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Replace category (admin) — full replace, all fields required
+      tags: [Categories]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string }
+                description: { type: string }
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/Category' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Delete category (admin)
+      tags: [Categories]
+      security:
+        - bearerAuth: []
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Products ────────────────────────────────────────────────────────────────
+
+  /products:
+    get:
+      summary: List products
+      description: Supports filtering, sorting, full-text search, offset pagination, and cursor pagination. Supports ETag caching and fault simulation.
+      tags: [Products]
+      parameters:
+        - { name: categoryId,    in: query,  schema: { type: integer }, description: Filter by category }
+        - { name: search,        in: query,  schema: { type: string  }, description: Full-text search on name + description }
+        - { name: sortBy,        in: query,  schema: { type: string, enum: [id, name, price, stock, createdAt], default: id } }
+        - { name: order,         in: query,  schema: { type: string, enum: [asc, desc], default: asc } }
+        - { name: page,          in: query,  schema: { type: integer, default: 1 }, description: Offset pagination page }
+        - { name: limit,         in: query,  schema: { type: integer, default: 10 } }
+        - { name: cursor,        in: query,  schema: { type: integer }, description: Cursor pagination — pass last seen product id. Overrides page. }
+        - { name: _delay,        in: query,  schema: { type: integer }, description: Simulate slow response (ms, max 10000) }
+        - { name: _fail,         in: query,  schema: { type: integer }, description: Simulate error response (e.g. 503) }
+        - { name: If-None-Match, in: header, schema: { type: string  }, description: ETag from previous response — returns 304 if data unchanged }
+      responses:
+        '200':
+          description: Product list
+          headers:
+            ETag:          { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:       { type: array, items: { $ref: '#/components/schemas/Product' } }
+                  pagination:
+                    oneOf:
+                      - { $ref: '#/components/schemas/OffsetPagination' }
+                      - { $ref: '#/components/schemas/CursorPagination' }
+        '304': { description: Not Modified — use cached data }
+    post:
+      summary: Create product (admin)
+      tags: [Products]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, price, stock, categoryId]
+              properties:
+                name:        { type: string }
+                description: { type: string }
+                price:       { type: number, example: 49.99 }
+                stock:       { type: integer, example: 100 }
+                categoryId:  { type: integer, example: 1 }
+      responses:
+        '201':
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /products/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Get product by ID
+      tags: [Products]
+      parameters:
+        - { name: _delay, in: query, schema: { type: integer } }
+        - { name: _fail,  in: query, schema: { type: integer } }
+        - { name: If-None-Match, in: header, schema: { type: string } }
+      responses:
+        '200':
+          headers:
+            ETag:          { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } }
+        '304': { description: Not Modified }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Full replace of product (admin) — omitted fields revert to null/default
+      tags: [Products]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, price, stock, categoryId]
+              properties:
+                name:        { type: string }
+                description: { type: string }
+                price:       { type: number }
+                stock:       { type: integer }
+                categoryId:  { type: integer }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Partial update of product (admin) — only supplied fields change
+      tags: [Products]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name:        { type: string }
+                description: { type: string }
+                price:       { type: number }
+                stock:       { type: integer }
+                categoryId:  { type: integer }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Delete product (admin)
+      tags: [Products]
+      security:
+        - bearerAuth: []
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /products/{id}/image:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Upload product image (admin) — multipart/form-data, max 5MB, JPEG/PNG/WebP
+      tags: [Products]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string, format: binary }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imageUrl: { type: string }
+                  filename: { type: string }
+                  size:     { type: integer }
+                  mimeType: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { description: Image exceeds 5 MB }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    get:
+      summary: Serve product image
+      tags: [Products]
+      responses:
+        '200':
+          description: Image binary
+          content:
+            image/jpeg: {}
+            image/png:  {}
+            image/webp: {}
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Cart ────────────────────────────────────────────────────────────────────
+
+  /cart:
+    get:
+      summary: Get current user's cart
+      tags: [Cart]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      summary: Clear entire cart
+      tags: [Cart]
+      security:
+        - bearerAuth: []
+      responses:
+        '204': { description: Cart cleared }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /cart/items:
+    post:
+      summary: Add item to cart
+      tags: [Cart]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantity]
+              properties:
+                productId: { type: integer }
+                quantity:  { type: integer, minimum: 1 }
+      responses:
+        '201':
+          content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Insufficient stock, $ref: '#/components/responses/UnprocessableEntity' }
+
+  /cart/items/{itemId}:
+    parameters:
+      - { name: itemId, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Update item quantity
+      tags: [Cart]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 1 }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    delete:
+      summary: Remove item from cart
+      tags: [Cart]
+      security:
+        - bearerAuth: []
+      responses:
+        '204': { description: Item removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Orders ──────────────────────────────────────────────────────────────────
+
+  /orders:
+    post:
+      summary: Checkout — converts cart to order
+      description: |
+        Validates stock, snapshots prices, decrements stock, clears cart.
+        Supports `Idempotency-Key` header — sending same key twice returns same 201 (no duplicate order).
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: { type: string }
+          description: Unique key per checkout attempt — enables safe retry
+      responses:
+        '201':
+          headers:
+            Location: { schema: { type: string } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } }
+        '400': { description: Cart is empty }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { description: Insufficient stock or product unavailable }
+    get:
+      summary: List orders (user sees own; admin sees all)
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page,   in: query, schema: { type: integer } }
+        - { name: limit,  in: query, schema: { type: integer } }
+        - { name: cursor, in: query, schema: { type: integer }, description: Cursor-based pagination }
+        - { name: status, in: query, schema: { type: string, enum: [pending, confirmed, shipped, delivered, cancelled] } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:       { type: array, items: { $ref: '#/components/schemas/Order' } }
+                  pagination:
+                    oneOf:
+                      - { $ref: '#/components/schemas/OffsetPagination' }
+                      - { $ref: '#/components/schemas/CursorPagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /orders/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Get order details
+      description: Users can only access their own orders (BOLA/IDOR protection). Use `?_delay` / `?_fail` for fault simulation.
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: _delay, in: query, schema: { type: integer } }
+        - { name: _fail,  in: query, schema: { type: integer } }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders/{id}/status:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    patch:
+      summary: Update order status (admin — state machine enforced)
+      description: |
+        Valid transitions:
+        `pending → confirmed | cancelled`
+        `confirmed → shipped | cancelled`
+        `shipped → delivered`
+        `delivered / cancelled → (terminal, no transitions)`
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [confirmed, shipped, delivered, cancelled] }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Invalid state transition }
+
+  /orders/{id}/cancel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    post:
+      summary: Cancel order (owner or admin)
+      description: Returns 409 if order is shipped or delivered.
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Cannot cancel — order already shipped or delivered }
+
+  # ── Users ───────────────────────────────────────────────────────────────────
+
+  /users/me:
+    get:
+      summary: Get own profile
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      summary: Update own profile (partial) — role field is silently ignored
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name:  { type: string }
+                email: { type: string, format: email }
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      summary: Soft-delete own account — subsequent login returns 401
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      responses:
+        '204': { description: Account deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users/me/password:
+    put:
+      summary: Change password
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [oldPassword, newPassword]
+              properties:
+                oldPassword: { type: string }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        '204': { description: Password changed }
+        '400': { description: Old password incorrect }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      summary: Get any user by ID (admin only)
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Seed ────────────────────────────────────────────────────────────────────
+
+  /seed/reset:
+    post:
+      summary: Wipe store and re-seed with full data set
+      description: Call this between test suites to restore clean state. Resets users, categories, products, carts, orders, tokens, rate limits.
+      tags: [Seed]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:     { type: string }
+                  credentials: { type: object }
+                  counts:      { type: object }
+
+  /seed/minimal:
+    post:
+      summary: Wipe store and seed with users only (no products/categories)
+      description: Useful for testing edge cases like empty catalogue, checkout of non-existent products.
+      tags: [Seed]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:     { type: string }
+                  credentials: { type: object }
+                  counts:      { type: object }
