@@ -1,5 +1,14 @@
 # Repository: api-testing-sandbox
 
+## Maintenance Rule
+**This file must be updated in the same change as any code modification.**
+Whenever a route, middleware, schema, store shape, env var, seed data, header, error behaviour,
+or design decision changes — update the relevant section here before considering the task done.
+This file is the single source of truth for GitHub Copilot context.
+Never let it drift from the actual code.
+
+---
+
 ## Purpose
 A self-contained REST API built purely for API testing practice — Playwright, REST Assured, Postman, etc.
 Zero external database. All data lives in a Node.js in-memory object (`src/db/store.js`).
