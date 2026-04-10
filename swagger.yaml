@@ -25,8 +25,8 @@ info:
 servers:
   - url: http://localhost:3000/v1
     description: Local development
-  - url: https://YOUR-APP.onrender.com/v1
-    description: Production (update after deploying to Render)
+  - url: https://api-gym-0w5i.onrender.com/v1
+    description: Production (Render)
 
 tags:
   - name: Auth

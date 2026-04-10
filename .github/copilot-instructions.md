@@ -92,7 +92,7 @@ store = {
 
 ### Base URL
 - Local: `http://localhost:3000/v1`
-- Production: `https://YOUR-APP.onrender.com/v1`
+- Production: `https://api-gym-0w5i.onrender.com/v1`
 
 ### Auth — `/v1/auth`
 | Method | Path | Auth | Notes |
@@ -252,8 +252,8 @@ Health check: `http://localhost:3000/health`
 2. Render → New Web Service → connect repo
 3. Build command: `npm install`
 4. Start command: `node src/app.js`
-5. Add env vars: `JWT_SECRET`, `JWT_REFRESH_SECRET`, `NODE_ENV=production`, `BASE_URL=https://your-app.onrender.com`
-6. Update `swagger.yaml` server URL (line ~32) with the Render URL
+5. Add env vars: `JWT_SECRET`, `JWT_REFRESH_SECRET`, `NODE_ENV=production`, `BASE_URL=https://api-gym-0w5i.onrender.com`
+6. ✅ `swagger.yaml` server URL already set to `https://api-gym-0w5i.onrender.com/v1`
 
 Note: Free tier spins down after 15min inactivity. First request after sleep takes ~30s. Irrelevant for test runs (one warm-up call wakes it).
 
