@@ -78,6 +78,11 @@
       "key": "productsEtag",
       "value": "",
       "description": "Set by List products test script"
+    },
+    {
+      "key": "resetKey",
+      "value": "",
+      "description": "X-Reset-Key header value for POST /seed/reset and /seed/minimal. Leave empty for local dev. Set to RESET_SECRET value for production."
     }
   ],
   "item": [
@@ -89,8 +94,15 @@
           "request": {
             "auth": { "type": "noauth" },
             "method": "POST",
+            "header": [
+              {
+                "key": "X-Reset-Key",
+                "value": "{{resetKey}}",
+                "description": "Required in production (Render). Leave empty for local dev."
+              }
+            ],
             "url": "{{baseUrl}}/seed/reset",
-            "description": "Wipes and re-seeds 3 users, 4 categories, 11 products. Call in beforeEach / before each test suite run."
+            "description": "Wipes and re-seeds 3 users, 4 categories, 11 products.\n\nLocal dev: leave resetKey variable empty — guard is bypassed.\nProduction: set the resetKey collection variable to the RESET_SECRET value."
           },
           "event": [
             {
@@ -123,8 +135,15 @@
           "request": {
             "auth": { "type": "noauth" },
             "method": "POST",
+            "header": [
+              {
+                "key": "X-Reset-Key",
+                "value": "{{resetKey}}",
+                "description": "Required in production (Render). Leave empty for local dev."
+              }
+            ],
             "url": "{{baseUrl}}/seed/minimal",
-            "description": "Seeds only 3 users. No products or categories. Useful for empty-catalogue edge case tests."
+            "description": "Seeds only 3 users. No products or categories. Useful for empty-catalogue edge case tests.\n\nLocal dev: leave resetKey variable empty.\nProduction: set the resetKey collection variable to the RESET_SECRET value."
           },
           "event": [
             {

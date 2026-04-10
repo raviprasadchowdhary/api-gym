@@ -163,8 +163,8 @@ cancelled → (terminal)
 ### Seed — `/v1/seed`
 | Method | Path | Notes |
 |--------|------|-------|
-| POST | /reset | full wipe + re-seed (3 users, 4 categories, 11 products) |
-| POST | /minimal | wipe + seed users only (no products/categories) |
+| POST | /reset | full wipe + re-seed (3 users, 4 categories, 11 products); requires `X-Reset-Key` header in prod |
+| POST | /minimal | wipe + seed users only (no products/categories); requires `X-Reset-Key` header in prod |
 
 ---
 
