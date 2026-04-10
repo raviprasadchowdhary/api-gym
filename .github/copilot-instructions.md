@@ -203,8 +203,8 @@ Validation errors (422) include an extra `errors[]` array with per-field detail.
 | Force error | `?_fail=503` (any 4xx/5xx) on same endpoints |
 | Idempotency | `Idempotency-Key: <uuid>` header on POST /orders |
 | ETag caching | `If-None-Match: <etag>` header on GET /products endpoints |
-| Reset state | `POST /v1/seed/reset` — call in beforeEach/BeforeEach |
-| Minimal state | `POST /v1/seed/minimal` — only users, no products |
+| Reset state | `POST /v1/seed/reset` with `X-Reset-Key: <secret>` header (required in prod; omit locally) |
+| Minimal state | `POST /v1/seed/minimal` with `X-Reset-Key: <secret>` header |
 
 ---
 
@@ -232,6 +232,7 @@ Validation errors (422) include an extra `errors[]` array with per-field detail.
 | `JWT_REFRESH_SECRET` | `dev-refresh-secret-change-in-prod` | Refresh token signing key |
 | `BASE_URL` | `http://localhost:3000` | Used in RFC 7807 `type` URLs |
 | `NODE_ENV` | `development` | Set to `production` on Render |
+| `RESET_SECRET` | _(unset)_ | When set, both `/seed/reset` and `/seed/minimal` require `X-Reset-Key: <value>` header; 401 otherwise. Unset = open (local dev). Store in Render env vars + GitHub repo secret. |
 
 ---
 
@@ -260,7 +261,7 @@ Note: Free tier spins down after 15min inactivity. First request after sleep tak
 ---
 
 ## Key Design Decisions
-- **In-memory only** — no DB setup needed anywhere; `POST /v1/seed/reset` restores state between test suites
+- **In-memory only** — no DB setup needed anywhere; `POST /v1/seed/reset` (with `X-Reset-Key` in prod) restores state between test suites
 - **Deterministic integer IDs** — no random UUIDs; seed always produces same IDs (users 1–3, categories 1–4, products 1–11)
 - **RFC 7807 errors** — consistent error schema; every error is assertable by `type`, `title`, `status`, `detail`
 - **Stock is real** — checkout decrements stock; cancel restores it; over-ordering returns 422

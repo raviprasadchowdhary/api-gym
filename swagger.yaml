@@ -889,8 +889,16 @@ paths:
   /seed/reset:
     post:
       summary: Wipe store and re-seed with full data set
-      description: Call this between test suites to restore clean state. Resets users, categories, products, carts, orders, tokens, rate limits.
+      description: |-
+        Call this between test suites to restore clean state. Resets users, categories, products, carts, orders, tokens, rate limits.
+
+        **Requires `X-Reset-Key` header** when the `RESET_SECRET` environment variable is set on the server (production). Omit the header in local dev where `RESET_SECRET` is not configured.
       tags: [Seed]
+      parameters:
+        - in: header
+          name: X-Reset-Key
+          schema: { type: string }
+          description: Must match the server's `RESET_SECRET` env var. Required in production; optional in local dev.
       responses:
         '200':
           content:
@@ -901,12 +909,21 @@ paths:
                   message:     { type: string }
                   credentials: { type: object }
                   counts:      { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /seed/minimal:
     post:
       summary: Wipe store and seed with users only (no products/categories)
-      description: Useful for testing edge cases like empty catalogue, checkout of non-existent products.
+      description: |-
+        Useful for testing edge cases like empty catalogue, checkout of non-existent products.
+
+        **Requires `X-Reset-Key` header** when `RESET_SECRET` is set on the server.
       tags: [Seed]
+      parameters:
+        - in: header
+          name: X-Reset-Key
+          schema: { type: string }
+          description: Must match the server's `RESET_SECRET` env var. Required in production; optional in local dev.
       responses:
         '200':
           content:
@@ -917,3 +934,4 @@ paths:
                   message:     { type: string }
                   credentials: { type: object }
                   counts:      { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }

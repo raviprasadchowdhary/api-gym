@@ -1,0 +1,22 @@
+name: Daily seed reset
+
+on:
+  schedule:
+    # Runs at 02:00 UTC every day — resets shared state after overnight inactivity
+    - cron: '0 2 * * *'
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+jobs:
+  reset:
+    name: Reset API seed data
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call POST /seed/reset
+        run: |
+          echo "Resetting seed data on ${{ vars.RENDER_URL || 'https://api-gym-0w5i.onrender.com' }} ..."
+          curl --fail --retry 3 --retry-delay 30 --max-time 60 \
+            -X POST \
+            -H "X-Reset-Key: ${{ secrets.RESET_SECRET }}" \
+            "${{ vars.RENDER_URL || 'https://api-gym-0w5i.onrender.com' }}/v1/seed/reset"
+          echo ""
+          echo "Seed reset complete."
