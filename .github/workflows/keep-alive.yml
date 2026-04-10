@@ -1,0 +1,21 @@
+name: Keep Render alive
+
+on:
+  schedule:
+    # Runs at 06:00 and 18:00 UTC every day
+    - cron: '0 6 * * *'
+    - cron: '0 18 * * *'
+  workflow_dispatch: # allow manual trigger
+
+jobs:
+  ping:
+    name: Ping health endpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake up service
+        run: |
+          echo "Pinging ${{ vars.RENDER_URL || 'https://api-gym-0w5i.onrender.com' }}/health ..."
+          curl --fail --retry 3 --retry-delay 30 --max-time 60 \
+            "${{ vars.RENDER_URL || 'https://api-gym-0w5i.onrender.com' }}/health"
+          echo ""
+          echo "Service is alive."
