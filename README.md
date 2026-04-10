@@ -10,6 +10,7 @@ A self-contained REST API built for API testing practice with Playwright, REST A
 
 ## Table of Contents
 
+- [Postman Collection](#postman-collection)
 - [Quick Start](#quick-start)
 - [Seeded Credentials](#seeded-credentials)
 - [E2E Flows](#e2e-flows)
@@ -24,6 +25,24 @@ A self-contained REST API built for API testing practice with Playwright, REST A
 - [Response Headers Worth Asserting](#response-headers-worth-asserting)
 - [Resetting State](#resetting-state)
 - [Running Locally](#running-locally)
+
+---
+
+## Postman Collection
+
+Import both files into Postman to get a ready-to-run collection with pre-request scripts, test assertions, and automatic token capture.
+
+| File | Purpose |
+|------|---------|
+| `postman/E-Commerce-API-Testing-Practice.postman_collection.json` | Full collection — 50+ requests across 7 folders |
+| `postman/E-Commerce-API.postman_environment.json` | Environment variables (baseUrl, tokens, IDs) |
+
+**Steps:**
+1. In Postman: **Import** → select both files
+2. Select the **E-Commerce API** environment
+3. Run **Seed → Reset — full seed** to restore clean data
+4. Run **Auth → Login as user** and **Auth → Login as admin** to capture tokens
+5. All subsequent requests use `{{accessToken}}` / `{{adminAccessToken}}` automatically
 
 ---
 
