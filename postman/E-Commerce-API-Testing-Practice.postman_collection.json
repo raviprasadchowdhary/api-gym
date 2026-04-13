@@ -90,6 +90,36 @@
       "name": "Seed",
       "item": [
         {
+          "name": "Minimal seed — users only",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Reset-Key",
+                "value": "{{resetKey}}",
+                "description": "Required in production (Render). Leave empty for local dev."
+              }
+            ],
+            "url": "{{baseUrl}}/seed/minimal",
+            "description": "Seeds only 3 users. No products or categories. Useful for empty-catalogue edge case tests.\n\nLocal dev: leave resetKey variable empty.\nProduction: set the resetKey collection variable to the RESET_SECRET value."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Product count is 0', function () {",
+                  "    pm.expect(pm.response.json().counts.products).to.equal(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Reset — full seed",
           "request": {
             "auth": { "type": "noauth" },
@@ -125,36 +155,6 @@
                   "pm.collectionVariables.set('orderId', '');",
                   "pm.collectionVariables.set('cartItemId', '');",
                   "pm.collectionVariables.set('idempotencyKey', '');"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Minimal seed — users only",
-          "request": {
-            "auth": { "type": "noauth" },
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-Reset-Key",
-                "value": "{{resetKey}}",
-                "description": "Required in production (Render). Leave empty for local dev."
-              }
-            ],
-            "url": "{{baseUrl}}/seed/minimal",
-            "description": "Seeds only 3 users. No products or categories. Useful for empty-catalogue edge case tests.\n\nLocal dev: leave resetKey variable empty.\nProduction: set the resetKey collection variable to the RESET_SECRET value."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
-                  "pm.test('Product count is 0', function () {",
-                  "    pm.expect(pm.response.json().counts.products).to.equal(0);",
-                  "});"
                 ]
               }
             }
