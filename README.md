@@ -51,6 +51,7 @@ Import both files into Postman to get a ready-to-run collection with pre-request
 ```http
 # 1. Wake the server (or reset to a clean state)
 POST https://api-gym-0w5i.onrender.com/v1/seed/reset
+X-Reset-Key: <RESET_SECRET value>   # required in production; omit for local dev
 
 # 2. Login and grab the accessToken
 POST https://api-gym-0w5i.onrender.com/v1/auth/login
@@ -303,6 +304,19 @@ POST /v1/seed/minimal
 
 Useful for testing empty catalogue edge cases.
 
+### Seed endpoint protection (`X-Reset-Key`)
+
+When the `RESET_SECRET` environment variable is set on the server (production), both `/seed/reset` and `/seed/minimal` require a matching `X-Reset-Key` header. Requests without a valid key receive `401 Unauthorized`.
+
+```http
+POST /v1/seed/reset
+X-Reset-Key: <RESET_SECRET value>
+```
+
+**Local dev:** `RESET_SECRET` is not set by default (see `.env.example`), so the guard is bypassed — no header needed.
+
+**Postman:** The `resetKey` collection variable controls this header. Leave it empty for local dev; set it to the `RESET_SECRET` value for production.
+
 ---
 
 ## Running Locally
@@ -320,3 +334,5 @@ npm start
 - Health check: `http://localhost:3000/health`
 
 For watch mode: `npm run dev`
+
+**Postman tip:** The environment file ships with `baseUrl` set to the production Render URL. For local development, update the `baseUrl` variable in Postman to `http://localhost:3000/v1`. The seed endpoints work without the `X-Reset-Key` header locally since `RESET_SECRET` is not configured.

@@ -246,6 +246,9 @@ npm run dev      # nodemon src/app.js (watch mode)
 Swagger UI: `http://localhost:3000/docs`  
 Health check: `http://localhost:3000/health`
 
+**Postman:** Change `baseUrl` env var from the production Render URL to `http://localhost:3000/v1`.  
+Seed endpoints (`/seed/reset`, `/seed/minimal`) work without `X-Reset-Key` header locally because `RESET_SECRET` is not set.
+
 ---
 
 ## Deploying to Render (free tier)
